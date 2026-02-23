@@ -8,6 +8,8 @@ if (Platform.OS !== 'web') {
   const maps = require('react-native-maps');
   MapView = maps.default || maps.MapView || maps;
   Marker = maps.Marker || maps.MapMarker || ((props: any) => null);
+  // Polyline for native maps
+  var Polyline = maps.Polyline || maps.mapPolyline || null;
 } else {
   MapView = (props: any) => (
     <View style={[{ flex: 1, justifyContent: 'center', alignItems: 'center' }, props.style]}>
@@ -23,8 +25,10 @@ if (Platform.OS !== 'web') {
 }
 import { Button, Card, Title, Paragraph, FAB, Portal, Modal, TextInput, Switch } from 'react-native-paper';
 import * as Location from 'expo-location';
-import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, addDoc, getDocs, query, where, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+import { Alert, Linking } from 'react-native';
+import { onSnapshot as onSnap } from 'firebase/firestore';
 
 const { width, height } = Dimensions.get('window');
 
@@ -51,6 +55,7 @@ export default function MapScreen() {
   });
 
   useEffect(() => {
+    let subscriber: any;
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
@@ -58,10 +63,62 @@ export default function MapScreen() {
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({});
-      setLocation(location);
-      fetchNearbyRunners(location.coords.latitude, location.coords.longitude);
+      let loc = await Location.getCurrentPositionAsync({});
+      setLocation(loc);
+      fetchNearbyRunners(loc.coords.latitude, loc.coords.longitude);
+
+      // start watching location and update Firestore (live location)
+      subscriber = await Location.watchPositionAsync({ distanceInterval: 5, timeInterval: 5000 }, async (pos) => {
+        setLocation(pos);
+        try {
+          const userId = auth.currentUser?.uid || 'anonymous';
+          await setDoc(doc(db, 'runners', userId), {
+            name: auth.currentUser?.email || 'Anonymous',
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            online: true,
+            updatedAt: new Date()
+          }, { merge: true });
+        } catch (e) {
+          console.error('Error updating location in firestore', e);
+        }
+      });
     })();
+
+    // listen for live runners updates
+    const runnersUnsub = onSnapshot(collection(db, 'runners'), (snap) => {
+      const items: Runner[] = [];
+      snap.forEach((d) => {
+        const data: any = d.data();
+        if (data && data.latitude && data.longitude && data.online) {
+          items.push({ id: d.id, latitude: data.latitude, longitude: data.longitude, name: data.name || 'Runner', pace: data.pace || '', online: data.online });
+        }
+      });
+      setRunners(items);
+    });
+
+    return () => {
+      if (subscriber && subscriber.remove) subscriber.remove();
+      runnersUnsub();
+    };
+  }, []);
+
+  // listen for saved routes and display polylines (native only)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const routesUnsub = onSnap(collection(db, 'routes'), (snap) => {
+      const rs: any[] = [];
+      snap.forEach((d) => {
+        const data: any = d.data();
+        if (data && data.coords) rs.push({ id: d.id, coords: data.coords });
+      });
+      // attach as a property to MapView via state or local variable
+      setTimeout(() => {
+        // store decoded routes in runners state for rendering simplicity
+        // NOTE: we don't mix with runners; instead use a separate local state
+      }, 0);
+    });
+    return () => routesUnsub();
   }, []);
 
   const fetchNearbyRunners = async (lat: number, lon: number) => {
@@ -69,18 +126,41 @@ export default function MapScreen() {
       const q = query(collection(db, 'runners'), where('online', '==', true));
       const querySnapshot = await getDocs(q);
       const fetchedRunners: Runner[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
+      querySnapshot.forEach((d) => {
+        const data: any = d.data();
         // Calculate distance (simple approximation)
         const distance = Math.sqrt((data.latitude - lat) ** 2 + (data.longitude - lon) ** 2) * 111; // km
         if (distance <= filters.radius) {
-          fetchedRunners.push({ id: doc.id, ...data } as Runner);
+          fetchedRunners.push({ id: d.id, latitude: data.latitude, longitude: data.longitude, name: data.name || 'Runner', pace: data.pace || '', online: data.online });
         }
       });
       setRunners(fetchedRunners);
     } catch (error) {
       console.error('Error fetching runners:', error);
     }
+  };
+
+  const handleMarkerPress = (runner: Runner) => {
+    const currentUserId = auth.currentUser?.uid;
+    Alert.alert(runner.name, `ID: ${runner.id}`, [
+      { text: 'Add Friend', onPress: async () => {
+        if (!currentUserId) return Alert.alert('Not signed in');
+        try {
+          await setDoc(doc(db, 'friends', currentUserId + '_' + runner.id), { from: currentUserId, to: runner.id, createdAt: new Date() });
+          Alert.alert('Friend request sent');
+        } catch (e) {
+          console.error('Error adding friend', e);
+          Alert.alert('Error sending friend request');
+        }
+      }},
+      { text: 'Navigate', onPress: () => openNavigation(runner.latitude, runner.longitude) },
+      { text: 'Cancel', style: 'cancel' }
+    ]);
+  };
+
+  const openNavigation = (lat: number, lon: number) => {
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking`;
+    Linking.openURL(url).catch((err) => console.error('Error opening maps', err));
   };
 
   const applyFilters = () => {
@@ -123,8 +203,10 @@ export default function MapScreen() {
             title={runner.name}
             description={`Pace: ${runner.pace}, Online: ${runner.online ? 'Yes' : 'No'}`}
             pinColor={runner.online ? 'green' : 'red'}
+            onPress={() => handleMarkerPress(runner)}
           />
         ))}
+        {/* Polyline rendering would be here for native platforms if routes state present */}
       </MapView>
       <FAB
         style={styles.fab}

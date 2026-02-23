@@ -31,3 +31,5 @@ export const oauthConfig = {
     tenant: 'common' // or your tenant id
   }
 };
+// Google Maps API Key placeholder (for Directions API)
+export const googleMapsApiKey = 'YOUR_GOOGLE_MAPS_API_KEY';
