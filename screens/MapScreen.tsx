@@ -4,12 +4,13 @@ import { View, StyleSheet, Dimensions, Platform, Text } from 'react-native';
 // Load react-native-maps only on native platforms to avoid web bundler errors
 let MapView: any;
 let Marker: any;
+let Polyline: any;
 if (Platform.OS !== 'web') {
   const maps = require('react-native-maps');
   MapView = maps.default || maps.MapView || maps;
   Marker = maps.Marker || maps.MapMarker || ((props: any) => null);
   // Polyline for native maps
-  var Polyline = maps.Polyline || maps.mapPolyline || null;
+  Polyline = maps.Polyline || maps.mapPolyline || null;
 } else {
   MapView = (props: any) => (
     <View style={[{ flex: 1, justifyContent: 'center', alignItems: 'center' }, props.style]}>
@@ -28,7 +29,6 @@ import * as Location from 'expo-location';
 import { collection, addDoc, getDocs, query, where, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Alert, Linking } from 'react-native';
-import { onSnapshot as onSnap } from 'firebase/firestore';
 
 const { width, height } = Dimensions.get('window');
 
@@ -45,6 +45,7 @@ export default function MapScreen() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [runners, setRunners] = useState<Runner[]>([]);
+  const [savedRoutes, setSavedRoutes] = useState<any[]>([]);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [filters, setFilters] = useState({
     radius: 5,
@@ -105,18 +106,13 @@ export default function MapScreen() {
 
   // listen for saved routes and display polylines (native only)
   useEffect(() => {
-    if (Platform.OS === 'web') return;
-    const routesUnsub = onSnap(collection(db, 'routes'), (snap) => {
+    const routesUnsub = onSnapshot(collection(db, 'routes'), (snap) => {
       const rs: any[] = [];
       snap.forEach((d) => {
         const data: any = d.data();
         if (data && data.coords) rs.push({ id: d.id, coords: data.coords });
       });
-      // attach as a property to MapView via state or local variable
-      setTimeout(() => {
-        // store decoded routes in runners state for rendering simplicity
-        // NOTE: we don't mix with runners; instead use a separate local state
-      }, 0);
+      setSavedRoutes(rs);
     });
     return () => routesUnsub();
   }, []);
@@ -206,7 +202,14 @@ export default function MapScreen() {
             onPress={() => handleMarkerPress(runner)}
           />
         ))}
-        {/* Polyline rendering would be here for native platforms if routes state present */}
+        {Platform.OS !== 'web' && Polyline && savedRoutes.map((r) => (
+          <Polyline
+            key={r.id}
+            coordinates={r.coords}
+            strokeColor="rgba(33,150,243,0.9)"
+            strokeWidth={4}
+          />
+        ))}
       </MapView>
       <FAB
         style={styles.fab}
