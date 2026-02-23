@@ -9,6 +9,7 @@ import MatchConnectScreen from './screens/MatchConnectScreen';
 import ScheduleScreen from './screens/ScheduleScreen';
 import LiveRunScreen from './screens/LiveRunScreen';
 import CommunityScreen from './screens/CommunityScreen';
+import AccountStack from './screens/AccountStack';
 
 const Tab = createBottomTabNavigator();
 
@@ -49,6 +50,7 @@ export default function App() {
           <Tab.Screen name="Schedule" component={ScheduleScreen} />
           <Tab.Screen name="Live Run" component={LiveRunScreen} />
           <Tab.Screen name="Community" component={CommunityScreen} />
+          <Tab.Screen name="Account" component={AccountStack} />
         </Tab.Navigator>
       </NavigationContainer>
     </PaperProvider>
